@@ -182,7 +182,8 @@ DASHBOARD_HTML = """
       tbody.innerHTML = rows.map(row => {
         const badge = {
           sent:'badge-sent', followed_up:'badge-followed_up',
-          replied:'badge-replied', pending:'badge-pending', failed:'badge-failed'
+          replied:'badge-replied', pending:'badge-pending',
+          failed:'badge-failed', dry_run:'badge-pending'
         }[row.status] || 'badge-pending';
         const followLabel = row.follow_up_count > 0 ? ` <span style="font-size:.7rem;color:#94a3b8">(+${row.follow_up_count} FU)</span>` : '';
         const date = row.sent_at ? row.sent_at.split('T')[0] : (row.created_at||'').split('T')[0];
