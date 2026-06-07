@@ -39,7 +39,9 @@ class Settings:
     DELAY_BETWEEN_EMAILS: int = int(os.getenv("DELAY_BETWEEN_EMAILS", "30"))  # seconds
 
     # Database
-    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/leads.db")
+    # Default: /tmp/leads.db  — works on Render free tier, GitHub Actions, and any host
+    # without a persistent disk. For local dev you can set DATABASE_PATH=data/leads.db
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "/tmp/leads.db")
 
     # Web Scraping
     REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "10"))
