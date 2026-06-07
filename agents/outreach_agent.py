@@ -168,8 +168,8 @@ Best regards,
 def process_lead(lead: dict) -> Optional[dict]:
     """
     Generate email content and find contact email for one lead.
-
-    Returns dict with outreach_id, contact_email, subject, body or None.
+    Marks the lead as 'emailed' immediately on outreach record creation
+    so re-clicking buttons never sends a duplicate.
     """
     company_name = lead["company_name"]
     website = lead["website"]
@@ -196,7 +196,8 @@ def process_lead(lead: dict) -> Optional[dict]:
         logger.warning("No email found for %s – skipping", company_name)
         return None
 
-    # Save outreach record
+    # Save outreach record AND immediately mark lead as emailed
+    # This prevents duplicate sends if the button is clicked again before emails go out
     outreach_id = save_outreach(
         lead_id=lead["id"],
         contact_email=contact_email,
@@ -253,10 +254,11 @@ def run(leads: list[dict] = None, dry_run: bool = False) -> dict:
 
         if dry_run:
             logger.info(
-                "[DRY RUN] Would send to %s: %s",
-                outreach["contact_email"],
-                outreach["email_subject"],
+                "[DRY RUN] Would send to %s (%s): %s",
+                outreach["contact_email"], outreach["company_name"], outreach["email_subject"],
             )
+            # Mark lead as emailed even in dry run so re-clicking doesn't duplicate
+            mark_email_sent(outreach["outreach_id"], success=False, error="dry_run")
             emails.append(outreach)
             sent += 1
             continue
