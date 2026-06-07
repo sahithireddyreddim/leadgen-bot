@@ -142,25 +142,32 @@ def mark_email_sent(outreach_id: int, success: bool, error: str = ""):
     try:
         cursor = conn.cursor()
         now = datetime.utcnow().isoformat()
+
+        if error == "dry_run":
+            new_status = "dry_run"
+        else:
+            new_status = "sent" if success else "failed"
+
         cursor.execute(
             """UPDATE outreach
                SET status = ?, sent_at = COALESCE(sent_at, ?),
                    last_contacted_at = ?, error_message = ?
                WHERE id = ?""",
             (
-                "sent" if success else "failed",
+                new_status,
                 now if success else None,
                 now if success else None,
-                error,
+                error if error != "dry_run" else None,
                 outreach_id,
             ),
         )
-        if success:
-            cursor.execute(
-                """UPDATE leads SET status = 'emailed', updated_at = ?
-                   WHERE id = (SELECT lead_id FROM outreach WHERE id = ?)""",
-                (now, outreach_id),
-            )
+        # Always move lead out of 'researched' so it won't be picked up again
+        cursor.execute(
+            """UPDATE leads SET status = 'emailed', updated_at = ?
+               WHERE id = (SELECT lead_id FROM outreach WHERE id = ?)
+                 AND status = 'researched'""",
+            (now, outreach_id),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -214,6 +221,10 @@ def get_leads_for_outreach(limit: int = 20) -> list:
                FROM leads l
                JOIN research r ON r.lead_id = l.id
                WHERE l.status = 'researched'
+                 AND l.id NOT IN (
+                     SELECT DISTINCT lead_id FROM outreach
+                     WHERE status IN ('sent', 'followed_up', 'pending', 'replied')
+                 )
                ORDER BY r.fit_score DESC
                LIMIT ?""",
             (limit,),
@@ -307,6 +318,8 @@ def get_pipeline_stats() -> dict:
         stats["replied"] = cursor.fetchone()["count"]
         cursor.execute("SELECT COUNT(*) as count FROM outreach WHERE status = 'failed'")
         stats["emails_failed"] = cursor.fetchone()["count"]
+        cursor.execute("SELECT COUNT(*) as count FROM outreach WHERE status = 'dry_run'")
+        stats["dry_run"] = cursor.fetchone()["count"]
         return stats
     finally:
         conn.close()
