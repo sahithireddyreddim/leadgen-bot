@@ -25,12 +25,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.database import init_db, get_pipeline_stats
 from config.settings import settings
 
+_log_path = os.path.join(os.path.dirname(os.getenv("DATABASE_PATH", "/tmp/leads.db")), "pipeline.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("data/pipeline.log", mode="a"),
+        logging.FileHandler(_log_path, mode="a"),
     ],
 )
 logger = logging.getLogger("pipeline")
@@ -72,7 +73,9 @@ def run_pipeline(stage: str = "all", target: int = None, dry_run: bool = False):
     if target:
         settings.DAILY_TARGET = target
 
-    os.makedirs("data", exist_ok=True)
+    db_dir = os.path.dirname(settings.DATABASE_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     init_db()
 
     logger.info("=" * 60)
