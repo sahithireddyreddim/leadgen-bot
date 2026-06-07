@@ -1,0 +1,58 @@
+# Render.com deployment configuration
+# Free tier: 750 hours/month web service + free cron jobs
+# Deploy: https://dashboard.render.com → New → Blueprint
+
+services:
+  # Web Dashboard (monitoring + manual triggers)
+  - type: web
+    name: b2b-lead-gen-dashboard
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 dashboard:app
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: gmail
+      - key: SENDER_EMAIL
+        sync: false
+      - key: SENDER_NAME
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: DAILY_TARGET
+        value: "10"
+      - key: MIN_FIT_SCORE
+        value: "60"
+      - key: DASHBOARD_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_PATH
+        value: data/leads.db
+
+  # Cron Job – runs pipeline daily at 9 AM UTC (covers US morning, UK afternoon, AU evening)
+  - type: cron
+    name: b2b-lead-gen-pipeline
+    env: python
+    plan: free
+    schedule: "0 9 * * 1-5"   # Weekdays 9 AM UTC – Mon–Fri
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py --target 10
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: gmail
+      - key: SENDER_EMAIL
+        sync: false
+      - key: SENDER_NAME
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: DAILY_TARGET
+        value: "10"
+      - key: MIN_FIT_SCORE
+        value: "60"
+      - key: DATABASE_PATH
+        value: data/leads.db

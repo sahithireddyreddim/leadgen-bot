@@ -1,0 +1,68 @@
+name: B2B Lead Gen Pipeline
+
+on:
+  schedule:
+    # Runs Mon–Fri at 9 AM UTC  (2:30 PM IST / 5 AM EST / 10 AM BST / 7 PM AEST)
+    - cron: "0 9 * * 1-5"
+  workflow_dispatch:   # Manual trigger from GitHub Actions tab
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify configuration
+        run: python main.py --setup-check
+        env:
+          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
+          SENDER_EMAIL:          ${{ secrets.SENDER_EMAIL }}
+          SENDER_NAME:           ${{ secrets.SENDER_NAME }}
+          EMAIL_PROVIDER:        ${{ secrets.EMAIL_PROVIDER }}
+          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
+          BREVO_SMTP_USER:       ${{ secrets.BREVO_SMTP_USER }}
+          BREVO_SMTP_PASSWORD:   ${{ secrets.BREVO_SMTP_PASSWORD }}
+          RESEND_API_KEY:        ${{ secrets.RESEND_API_KEY }}
+          DAILY_TARGET:          ${{ vars.DAILY_TARGET || '10' }}
+
+      - name: Run pipeline (find + research + outreach + follow-ups)
+        run: python main.py --target ${{ vars.DAILY_TARGET || '10' }}
+        env:
+          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
+          SENDER_EMAIL:          ${{ secrets.SENDER_EMAIL }}
+          SENDER_NAME:           ${{ secrets.SENDER_NAME }}
+          EMAIL_PROVIDER:        ${{ secrets.EMAIL_PROVIDER }}
+          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
+          BREVO_SMTP_USER:       ${{ secrets.BREVO_SMTP_USER }}
+          BREVO_SMTP_PASSWORD:   ${{ secrets.BREVO_SMTP_PASSWORD }}
+          RESEND_API_KEY:        ${{ secrets.RESEND_API_KEY }}
+          DAILY_TARGET:          ${{ vars.DAILY_TARGET || '10' }}
+          MIN_FIT_SCORE:         "60"
+          DATABASE_PATH:         "data/leads.db"
+          DELAY_BETWEEN_EMAILS:  "30"
+
+      - name: Upload results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-results-${{ github.run_id }}
+          path: |
+            data/leads.db
+            data/pipeline.log
+          retention-days: 30

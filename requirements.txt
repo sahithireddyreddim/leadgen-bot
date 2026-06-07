@@ -1,0 +1,21 @@
+# Core
+flask>=3.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+
+# LLM - Groq (free tier: generous daily limits, no credit card needed)
+groq>=0.8.0
+
+# Web Search - DuckDuckGo (no API key needed, completely free)
+duckduckgo-search>=6.1.0
+
+# Email DNS verification
+dnspython>=2.6.0
+
+# Scheduling (for cron-style runs)
+apscheduler>=3.10.0
+
+# Production server
+gunicorn>=22.0.0
