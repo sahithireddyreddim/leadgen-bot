@@ -4,65 +4,194 @@ on:
   schedule:
     # Runs Mon–Fri at 9 AM UTC  (2:30 PM IST / 5 AM EST / 10 AM BST / 7 PM AEST)
     - cron: "0 9 * * 1-5"
-  workflow_dispatch:   # Manual trigger from GitHub Actions tab
+  workflow_dispatch:         # ← Manual trigger from GitHub Actions tab (use for testing)
+    inputs:
+      target:
+        description: "Number of emails to send"
+        required: false
+        default: "10"
+      dry_run:
+        description: "Dry run (no emails sent)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      stage:
+        description: "Pipeline stage to run"
+        required: false
+        default: "all"
+        type: choice
+        options: ["all", "find", "research", "outreach", "followup"]
+
+env:
+  DATABASE_PATH: /tmp/leads.db
+  GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
+  SENDER_EMAIL:          ${{ secrets.SENDER_EMAIL }}
+  SENDER_NAME:           ${{ secrets.SENDER_NAME }}
+  EMAIL_PROVIDER:        ${{ secrets.EMAIL_PROVIDER }}
+  GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
+  BREVO_SMTP_USER:       ${{ secrets.BREVO_SMTP_USER }}
+  BREVO_SMTP_PASSWORD:   ${{ secrets.BREVO_SMTP_PASSWORD }}
+  RESEND_API_KEY:        ${{ secrets.RESEND_API_KEY }}
+  MIN_FIT_SCORE:         "60"
+  DELAY_BETWEEN_EMAILS:  "30"
+  SCRAPE_DELAY:          "2.0"
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      # ── 2. Python setup ──────────────────────────────────────────────────────
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Cache pip dependencies
+      # ── 3. Cache pip packages ────────────────────────────────────────────────
+      - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: pip-${{ hashFiles('requirements.txt') }}
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # ── 4. Restore database from previous run ────────────────────────────────
+      #    This is what makes data PERSIST between daily runs on GitHub Actions.
+      #    The cache key includes the branch so each branch has its own DB.
+      - name: Restore database cache
+        uses: actions/cache/restore@v4
+        id: db-cache
+        with:
+          path: /tmp/leads.db
+          key: leads-db-${{ github.ref_name }}-latest
+          restore-keys: |
+            leads-db-${{ github.ref_name }}-
+
+      - name: Report cache status
+        run: |
+          if [ "${{ steps.db-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Database restored from cache"
+            python -c "
+          import sqlite3, os
+          if os.path.exists('/tmp/leads.db'):
+              conn = sqlite3.connect('/tmp/leads.db')
+              stats = {}
+              for row in conn.execute(\"SELECT status, COUNT(*) FROM leads GROUP BY status\"):
+                  stats[row[0]] = row[1]
+              sent = conn.execute(\"SELECT COUNT(*) FROM outreach WHERE status IN ('sent','followed_up')\").fetchone()[0]
+              print(f'DB: leads={dict(stats)}, emails_sent={sent}')
+              conn.close()
+          "
+          else
+            echo "ℹ️ No cache found — starting fresh database"
+          fi
+
+      # ── 5. Verify config ─────────────────────────────────────────────────────
       - name: Verify configuration
         run: python main.py --setup-check
-        env:
-          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
-          SENDER_EMAIL:          ${{ secrets.SENDER_EMAIL }}
-          SENDER_NAME:           ${{ secrets.SENDER_NAME }}
-          EMAIL_PROVIDER:        ${{ secrets.EMAIL_PROVIDER }}
-          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
-          BREVO_SMTP_USER:       ${{ secrets.BREVO_SMTP_USER }}
-          BREVO_SMTP_PASSWORD:   ${{ secrets.BREVO_SMTP_PASSWORD }}
-          RESEND_API_KEY:        ${{ secrets.RESEND_API_KEY }}
-          DAILY_TARGET:          ${{ vars.DAILY_TARGET || '10' }}
 
-      - name: Run pipeline (find + research + outreach + follow-ups)
-        run: python main.py --target ${{ vars.DAILY_TARGET || '10' }}
-        env:
-          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
-          SENDER_EMAIL:          ${{ secrets.SENDER_EMAIL }}
-          SENDER_NAME:           ${{ secrets.SENDER_NAME }}
-          EMAIL_PROVIDER:        ${{ secrets.EMAIL_PROVIDER }}
-          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
-          BREVO_SMTP_USER:       ${{ secrets.BREVO_SMTP_USER }}
-          BREVO_SMTP_PASSWORD:   ${{ secrets.BREVO_SMTP_PASSWORD }}
-          RESEND_API_KEY:        ${{ secrets.RESEND_API_KEY }}
-          DAILY_TARGET:          ${{ vars.DAILY_TARGET || '10' }}
-          MIN_FIT_SCORE:         "60"
-          DATABASE_PATH:         "data/leads.db"
-          DELAY_BETWEEN_EMAILS:  "30"
+      # ── 6. Run pipeline ──────────────────────────────────────────────────────
+      - name: Run pipeline
+        run: |
+          TARGET="${{ github.event.inputs.target || vars.DAILY_TARGET || '10' }}"
+          STAGE="${{ github.event.inputs.stage || 'all' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
 
-      - name: Upload results as artifact
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 DRY RUN — no emails will be sent"
+            python main.py --stage "$STAGE" --target "$TARGET" --dry-run
+          else
+            python main.py --stage "$STAGE" --target "$TARGET"
+          fi
+
+      # ── 7. Save database for next run ────────────────────────────────────────
+      #    Always save, even if pipeline failed partway through.
+      - name: Save database cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/leads.db
+          key: leads-db-${{ github.ref_name }}-${{ github.run_id }}
+
+      # ── 8. Generate job summary (visible in Actions tab) ─────────────────────
+      - name: Generate pipeline report
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import sqlite3, os, json
+          from datetime import datetime
+
+          db = "/tmp/leads.db"
+          if not os.path.exists(db):
+              print("No database found")
+              exit(0)
+
+          conn = sqlite3.connect(db)
+          conn.row_factory = sqlite3.Row
+
+          # Stats
+          stats = {}
+          for row in conn.execute("SELECT status, COUNT(*) as c FROM leads GROUP BY status"):
+              stats[row["status"]] = row["c"]
+          sent    = conn.execute("SELECT COUNT(*) FROM outreach WHERE status='sent'").fetchone()[0]
+          followup= conn.execute("SELECT COUNT(*) FROM outreach WHERE status='followed_up'").fetchone()[0]
+          replied = conn.execute("SELECT COUNT(*) FROM outreach WHERE status='replied'").fetchone()[0]
+          failed  = conn.execute("SELECT COUNT(*) FROM outreach WHERE status='failed'").fetchone()[0]
+
+          # Recent outreach
+          rows = conn.execute("""
+              SELECT o.contact_email, o.email_subject, o.status,
+                     o.follow_up_count, o.sent_at, l.company_name, l.industry, l.region
+              FROM outreach o JOIN leads l ON l.id = o.lead_id
+              ORDER BY o.created_at DESC LIMIT 20
+          """).fetchall()
+          conn.close()
+
+          summary = f"""
+          ## B2B Lead Gen — Pipeline Report
+          **Run:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+
+          ### Stats
+          | Metric | Count |
+          |--------|-------|
+          | Leads Discovered | {stats.get('discovered', 0)} |
+          | Leads Researched | {stats.get('researched', 0)} |
+          | Leads Rejected (score < 60) | {stats.get('rejected', 0)} |
+          | Emails Sent | {sent} |
+          | Follow-ups Sent | {followup} |
+          | Replied | {replied} |
+          | Failed | {failed} |
+
+          ### Recent Outreach (last 20)
+          | Company | Industry | Region | Sent To | Subject | Status | FU# |
+          |---------|----------|--------|---------|---------|--------|-----|
+          """
+          for r in rows:
+              status_icon = {"sent":"✅","followed_up":"🔁","replied":"💬","failed":"❌"}.get(r["status"],"⏳")
+              summary += f"| {r['company_name']} | {r['industry'] or ''} | {r['region'] or ''} | {r['contact_email']} | {r['email_subject'] or ''} | {status_icon} {r['status']} | {r['follow_up_count']} |\n"
+
+          # Write to GitHub Step Summary
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout"), "a") as f:
+              f.write(summary)
+
+          print(summary)
+          PYEOF
+
+      # ── 9. Upload DB and logs as artifact ────────────────────────────────────
+      - name: Upload pipeline artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pipeline-results-${{ github.run_id }}
+          name: pipeline-run-${{ github.run_id }}
           path: |
-            data/leads.db
-            data/pipeline.log
+            /tmp/leads.db
+            /tmp/pipeline.log
           retention-days: 30
